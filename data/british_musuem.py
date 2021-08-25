@@ -5,30 +5,32 @@ import pandas as pd
 
 class BritishMuseum:
 
-    def __init__(self):
-        self.path = "/home/fabian/Documents/cozy/Coin Project/european coins 1000bc-900ad"
+    def __init__(self, path="/Users/fabian/Cozy Drive/Coin Project/rohdaten"):
+        self.path = path
         self.file_name = "megred_data.xlsx"
-        self.data = pd.DataFrame()
+        self.__data = pd.DataFrame()
+        self.__load_data()
+        self.__clean_up_data()
 
-    def __load_data(self):
+    def __load_data(self) -> None:
         for file in os.listdir(self.path):
             if file.endswith(".csv"):
                 file_path = os.path.join(self.path, file)
                 df = pd.read_csv(file_path)
-                self.data = self.data.append(df, ignore_index=True)
+                self.__data = self.__data.append(df, ignore_index=True)
 
-        self.data.drop_duplicates(subset="Museum number", inplace=True)
+        self.__data.drop_duplicates(subset="Museum number", inplace=True)
 
-    def __drop_empty_cols(self):
+    def __drop_empty_cols(self) -> None:
         empty_cols = []
-        for col in self.data.columns:
-            if self.data[col].isna().all():
+        for col in self.__data.columns:
+            if self.__data[col].isna().all():
                 empty_cols.append(col)
 
-        self.data.drop(columns=empty_cols, inplace=True)
+        self.__data.drop(columns=empty_cols, inplace=True)
 
-    def __clean_object_types(self):
-        object_types = self.df['Object type'].str.split("; ", expand=True)
+    def __clean_object_types(self) -> None:
+        object_types = self.__data['Object type'].str.split("; ", expand=True)
 
         object_types.columns = ['object_type1', 'object_type2', 'object_type3',
                                 'object_type4']
@@ -59,34 +61,83 @@ class BritishMuseum:
             for col in object_types.columns:
                 object_types.loc[object_types[col] == element, col] = None
 
-        self.data = object_types.join(self.data, how="inner")
-        self.data.drop(columns=['Object type'], inplace=True)
+        self.__data = object_types.join(self.__data, how="inner")
+        self.__data.drop(columns=['Object type'], inplace=True)
 
-    def __clean_materials(self):
+    def __clean_denominator(self) -> None:
+        """
+        For the start we only want to consider denominator with more than 75
+        coins in sample size. This drops 300+ Denominators while only losing
+        about 3000 coins from the sample
 
-        materials = self.data['Materials'].str.split("; ")
-        materials.columns = ['material_type1', 'material_type2',
-                             'material_type3']
+        :return:
+        """
+        coin_count = self.__data.groupby(["Denomination", "Materials"])
+        coin_count = coin_count['Museum number'].count()
+        coin_count = coin_count.reset_index()
 
-        # only the first 3 columns are useful
-        materials = materials.loc[:, :2]
+        denominator = coin_count.loc[
+            coin_count['Museum number'] >= 75, 'Denomination'].unique()
+        materials = coin_count.loc[
+            coin_count['Museum number'] >= 75, 'Materials'].unique()
 
-        self.data = self.data.join(materials, how='inner')
-        self.data.drop(columns="Materials")
+        na_values = self.__data.loc[self.__data['Denomination'].isna(), :]
 
-    def to_excel(self):
+        df = self.__data.loc[(self.__data['Denomination'].isin(denominator)) &
+                             (self.__data['Materials'].isin(materials)), :]
+
+        self.__data = df.append(na_values)
+
+    def __clean_find_spot(self) -> None:
+        find_spots = self.__data.groupby("Find spot")['Museum number'].count()
+        find_spots = find_spots.reset_index()
+
+        # Extracting only the Name of the find spot and dropping all additional
+        #   notes
+        spots = find_spots['Find spot'].str.split(": ", expand=True)
+        spots = spots[1].str.extract(r"([\w -]+)")
+        spots.columns = ['find_spot_simplified']
+
+        find_spots = pd.merge(spots, find_spots, left_index=True,
+                              right_index=True)
+
+        # excluding all acquired coins
+        find_spots = find_spots.loc[
+            ~find_spots['Find spot'].str.startswith("Found")]
+
+        na_values = self.__data.loc[self.__data['Find spot'].isna()]
+        df = pd.merge(self.__data, find_spots, left_on="Find spot",
+                      right_on="Find spot", how="inner")
+        self.__data = df.append(na_values)
+        self.__data.drop(columns=['Museum number_y', 'Museum number'],
+                         inplace=True)
+
+        self.__data.rename(columns={'Museum number_x': 'Museum number'},
+                           inplace=True)
+
+    def __clean_up_data(self) -> None:
+        """
+        Calls all the clean up functions to prepare the data for DB import
+        :return:
+        """
+        self.__clean_object_types()
+        self.__clean_denominator()
+        self.__clean_find_spot()
+
+        self.__drop_empty_cols()
+
+    def to_excel(self) -> None:
         with pd.ExcelWriter(os.path.join(self.path, self.file_name)) as writer:
-            self.data.to_excel(writer, index=False)
+            self.__data.to_excel(writer, index=False)
 
+    def get_located_coins(self):
+        """
+        Returns all coins with a known find spot
 
-def clean_denominator(df: pd.DataFrame) -> pd.DataFrame:
-    denominators = df['Denomination'].str.split("; ", expand=True)
+        """
 
-    denominators.dropna(how="all", inplace=True)
+        return self.__data.loc[self.__data['find_spot_simplified'].notna(), :]
 
-    denominators = denominators[~denominators[0].str.contains("\?")]
-
-    # these are actually materials, not denominations
-    actually_materials = ['potin']
-
-    # left join at the end to maintain NaNs
+    def get_data(self):
+        """Returns all data"""
+        return self.__data

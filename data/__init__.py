@@ -6,4 +6,4 @@ IP = "127.0.0.1"
 PORT = "3306"
 DB = "coins"
 
-engine = create_engine(f"mysql+pymysql://{USER}:{PW}@{IP}:{PORT}/{DB}")
+# engine = create_engine(f"mysql+pymysql://{USER}:{PW}@{IP}:{PORT}/{DB}")
